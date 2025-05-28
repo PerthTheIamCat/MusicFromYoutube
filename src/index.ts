@@ -1,8 +1,6 @@
-// src/main.ts
-import * as dotenv from "dotenv";
-dotenv.config();
-
-import { spawn } from "child_process";
+import { BOT_TOKEN } from "./lib/config";
+import { ERROR, SUCCESS, WORKING } from "./lib/logCLI";
+import { command_join, command_leave } from "./lib/commands";
 import {
   Client,
   GatewayIntentBits,
@@ -10,6 +8,7 @@ import {
   CommandInteraction,
   Interaction,
   GuildMember,
+  ActivityType,
 } from "discord.js";
 import {
   joinVoiceChannel,
@@ -21,34 +20,73 @@ import {
   VoiceConnection,
 } from "@discordjs/voice";
 
-type ServerQueue = {
-  connection: VoiceConnection;
-  player: ReturnType<typeof createAudioPlayer>;
-  songs: string[];
-};
-
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
 });
 
-// เก็บคิวเพลงของแต่ละ Guild
-const queueMap = new Map<string, ServerQueue>();
-
 client.once(Events.ClientReady, () => {
-  console.log(`Logged in as ${client.user?.tag}!`);
+  console.log(
+    SUCCESS({
+      message: `พร้อมใช้งานในฐานะ ${client.user?.tag}`,
+    })
+  );
+  client.user?.setActivity("กำลังรอคำสั่ง", {
+    type: ActivityType.Custom,
+  });
 });
 
+console.log(WORKING({ message: "กำลังตรวจสอบ platform สำหรับ yt-dlp" }));
+const OS = process.platform;
+const ytDlpBinary = (() => {
+  switch (OS) {
+    case "win32":
+      return "yt-dlp.exe";
+    case "darwin":
+      return "yt-dlp_macos";
+    default:
+      console.error(
+        ERROR({
+          message: `แพลตฟอร์ม ${OS} ไม่รองรับ yt-dlp ที่มีให้. กรุณาใช้ Windows หรือ macOS.`,
+        })
+      );
+      process.exit(1);
+  }
+})();
+
+console.log(
+  SUCCESS({ message: `กำลังใช้ yt-dlp binary: ${ytDlpBinary} สำหรับ ${OS}` })
+);
+
 client.on(Events.InteractionCreate, async (interaction: Interaction) => {
+  const cmd = interaction as CommandInteraction;
+  if (!interaction.isCommand()) return;
+  const { commandName } = cmd;
   if (!interaction.isCommand()) return;
 
-  const cmd = interaction as CommandInteraction;
-  const { commandName, options, member, guild } = cmd;
-
-  const voiceChannel = (member as GuildMember)?.voice?.channel;
-  if ((commandName === "join" || commandName === "play") && !voiceChannel) {
-    await cmd.reply("❌ ต้องอยู่ในห้องเสียงก่อนครับ");
-    return;
+  if (commandName === "join") {
+    command_join(cmd);
+  } else if (commandName === "stop") {
+    command_leave(cmd);
+  } else {
+    cmd.reply({
+      content: "คำสั่งนี้ไม่รองรับ",
+      ephemeral: true,
+    });
   }
 });
 
-client.login(process.env.BOT_TOKEN);
+client.on(Events.VoiceStateUpdate, (oldState, newState) => {
+  const oldConnection = getVoiceConnection(oldState.guild.id);
+  if (!oldConnection) return;
+
+  if (newState.channelId === null && oldState.channelId !== null) {
+    oldConnection.destroy();
+    console.log(
+      SUCCESS({
+        message: `ออกจากห้องเสียง ${oldState.channelId} เพราะไม่มีคนอยู่แล้ว`,
+      })
+    );
+  }
+});
+
+client.login(BOT_TOKEN);

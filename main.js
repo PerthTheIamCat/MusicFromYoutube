@@ -98,7 +98,7 @@ async function processQueue(guildId) {
     const nextUrl = songs.shift();
 
     // spawn yt-dlp ให้ส่ง bestaudio ออก stdout
-    const yt = spawn('yt-dlp.exe', [
+    const yt = spawn('/usr/local/bin/yt-dlp', [
         '-f', 'bestaudio',
         '-o', '-',      // ส่งออกทาง stdout
         nextUrl
