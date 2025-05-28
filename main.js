@@ -1,21 +1,21 @@
 // main.js
 require('dotenv').config();
+const { spawn } = require('child_process');
 const { Client, GatewayIntentBits, Events } = require('discord.js');
 const {
     joinVoiceChannel,
     getVoiceConnection,
     createAudioPlayer,
     createAudioResource,
-    AudioPlayerStatus
+    AudioPlayerStatus,
+    StreamType
 } = require('@discordjs/voice');
-const ytdl = require('ytdl-core');
 
 const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildVoiceStates
-    ]
+    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates]
 });
+
+const queueMap = new Map();
 
 client.once(Events.ClientReady, () => {
     console.log(`Logged in as ${client.user.tag}!`);
@@ -23,96 +23,103 @@ client.once(Events.ClientReady, () => {
 
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isCommand()) return;
-    const { commandName, options, member, guild, channel } = interaction;
+    const { commandName, options, member, guild } = interaction;
+    const voiceChannel = member.voice.channel;
 
-    // /join command
+    if ((commandName === 'join' || commandName === 'play') && !voiceChannel) {
+        return interaction.reply('❌ ต้องอยู่ในห้องเสียงก่อนครับ');
+    }
+
     if (commandName === 'join') {
-        const voiceChannel = member.voice.channel;
-        if (!voiceChannel) {
-            return interaction.reply('❌ คุณต้องอยู่ในห้องเสียงก่อนสั่งให้บอทเข้าครับ');
-        }
         joinVoiceChannel({
             channelId: voiceChannel.id,
             guildId: guild.id,
             adapterCreator: guild.voiceAdapterCreator,
         });
-        return interaction.reply(`✅ เข้าห้องเสียง **${voiceChannel.name}** แล้วครับ`);
+        return interaction.reply(`✅ เข้าห้องเสียง **${voiceChannel.name}** แล้ว`);
     }
 
-    // /play command
     if (commandName === 'play') {
         let url = options.getString('url');
         if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
-        if (!ytdl.validateURL(url)) {
-            return interaction.reply('❌ ลิงก์ YouTube ไม่ถูกต้อง');
+
+        // สร้าง queue ถ้ายังไม่มี
+        let serverQueue = queueMap.get(guild.id);
+        if (!serverQueue) {
+            const connection = joinVoiceChannel({
+                channelId: voiceChannel.id,
+                guildId: guild.id,
+                adapterCreator: guild.voiceAdapterCreator,
+            });
+            const player = createAudioPlayer();
+            connection.subscribe(player);
+            player.on(AudioPlayerStatus.Idle, () => processQueue(guild.id));
+            player.on('error', () => processQueue(guild.id));
+            serverQueue = { connection, player, songs: [] };
+            queueMap.set(guild.id, serverQueue);
         }
-        const voiceChannel = member.voice.channel;
-        if (!voiceChannel) {
-            return interaction.reply('❌ คุณต้องอยู่ในห้องเสียงก่อนครับ');
+
+        serverQueue.songs.push(url);
+        await interaction.reply(`🎶 เพิ่มลงคิว: ${url}`);
+        if (serverQueue.player.state.status === AudioPlayerStatus.Idle) {
+            processQueue(guild.id);
         }
-
-        // สร้าง connection และ player
-        const connection = joinVoiceChannel({
-            channelId: voiceChannel.id,
-            guildId: guild.id,
-            adapterCreator: guild.voiceAdapterCreator,
-        });
-        const player = createAudioPlayer();
-        connection.subscribe(player);
-
-        // ผูก listener เพียงครั้งเดียว
-        player.on(AudioPlayerStatus.Idle, () => {
-            getVoiceConnection(guild.id)?.destroy();
-            channel.send('✅ เล่นจบแล้ว ออกจากห้องเสียงครับ');
-        });
-        player.on('error', error => {
-            console.error('AudioPlayer error:', error);
-            getVoiceConnection(guild.id)?.destroy();
-            channel.send('❌ เกิดข้อผิดพลาดขณะเล่นเพลง');
-        });
-
-        // สั่งเล่นด้วย retry logic
-        playWithRetry(url, player, connection);
-        return interaction.reply(`▶️ กำลังเล่นเพลง: ${url}`);
     }
 
-    // /leave command
     if (commandName === 'leave') {
-        const conn = getVoiceConnection(guild.id);
-        if (conn) conn.destroy();
-        return interaction.reply('👋 ออกจากห้องเสียงเรียบร้อยแล้ว');
+        const serverQueue = queueMap.get(guild.id);
+        if (serverQueue) {
+            serverQueue.connection.destroy();
+            queueMap.delete(guild.id);
+            return interaction.reply('👋 ออกจากห้องเสียงและเคลียร์คิวแล้ว');
+        }
+        return interaction.reply('❌ บอทไม่ได้อยู่ในห้องเสียงนี้');
     }
 });
 
 client.login(process.env.BOT_TOKEN);
 
+
 /**
- * เล่นเพลงและ retry เมื่อ stream ถูกปิด
- * @param {string} url
- * @param {AudioPlayer} player
- * @param {VoiceConnection} connection
- * @param {number} retries
+ * เล่นเพลงจากคิวทีละเพลง โดยใช้ yt-dlp.exe + ffmpeg
  */
-function playWithRetry(url, player, connection, retries = 3) {
-    const stream = ytdl(url, {
-        filter: 'audioonly',
-        quality: 'highestaudio',
-        highWaterMark: 1 << 25 // ~32MB buffer
+async function processQueue(guildId) {
+    const serverQueue = queueMap.get(guildId);
+    if (!serverQueue) return;
+
+    const { connection, player, songs } = serverQueue;
+
+    if (songs.length === 0) {
+        connection.destroy();
+        queueMap.delete(guildId);
+        return;
+    }
+
+    const nextUrl = songs.shift();
+
+    // spawn yt-dlp ให้ส่ง bestaudio ออก stdout
+    const yt = spawn('yt-dlp.exe', [
+        '-f', 'bestaudio',
+        '-o', '-',      // ส่งออกทาง stdout
+        nextUrl
+    ], { stdio: ['ignore', 'pipe', 'inherit'] });
+
+    // ต่อเข้ากับ ffmpeg เพื่อแปลงเป็น raw PCM หรือ Opus ตามต้องการ
+    const ffmpeg = spawn('ffmpeg', [
+        '-i', 'pipe:0',
+        '-f', 's16le',        // raw PCM
+        '-ar', '48000',       // sample rate 48kHz
+        '-ac', '2',           // stereo
+        'pipe:1'
+    ], { stdio: ['pipe', 'pipe', 'inherit'] });
+
+    yt.stdout.pipe(ffmpeg.stdin);
+
+    // สร้าง resource จาก ffmpeg.stdout
+    const resource = createAudioResource(ffmpeg.stdout, {
+        inputType: StreamType.Raw
     });
-    const resource = createAudioResource(stream);
+
     player.play(resource);
-
-    stream.on('error', err => {
-        console.error('Stream error:', err);
-    });
-
-    stream.on('close', () => {
-        if (retries > 0) {
-            console.log(`Stream closed, retrying... (${retries} left)`);
-            playWithRetry(url, player, connection, retries - 1);
-        } else {
-            console.error('Stream failed after retries');
-            connection.destroy();
-        }
-    });
+    console.log('▶️ กำลังเล่น:', nextUrl);
 }
