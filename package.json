@@ -21,5 +21,10 @@
     "play-dl": "^1.9.7",
     "ytdl-core": "npm:@distube/ytdl-core@^4.16.10",
     "ytpl": "^2.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.23",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3"
   }
 }

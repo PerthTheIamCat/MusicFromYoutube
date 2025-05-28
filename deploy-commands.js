@@ -10,9 +10,6 @@ const commands = [
         .setName('ping')
         .setDescription('Replies with Pong!'),
     new SlashCommandBuilder()
-        .setName('join')
-        .setDescription('ให้บอทเข้าห้องเสียงของคุณ'),
-    new SlashCommandBuilder()
         .setName('play')
         .setDescription('เล่นเพลงจาก YouTube URL')
         .addStringOption(option =>
@@ -22,8 +19,23 @@ const commands = [
                 .setRequired(true)
         ),
     new SlashCommandBuilder()
-        .setName('leave')
-        .setDescription('ให้ออกจากห้องเสียงและหยุดเพลง')
+        .setName('pause')
+        .setDescription('หยุดเพลงชั่วคราว'),
+    new SlashCommandBuilder()
+        .setName('resume')
+        .setDescription('เล่นเพลงต่อจากที่หยุดไว้'),
+    new SlashCommandBuilder()
+        .setName('skip')
+        .setDescription('ข้ามเพลงปัจจุบัน'),
+    new SlashCommandBuilder()
+        .setName('queue')
+        .setDescription('แสดงคิวเพลง'),
+    new SlashCommandBuilder()
+        .setName('join')
+        .setDescription('เข้าห้องเสียงที่ผู้ใช้กำลังอยู่'),
+    new SlashCommandBuilder()
+        .setName('stop')
+        .setDescription('หยุดเล่นเพลง เคลียร์คิว และออกจากห้องเสียง'),
 ].map(cmd => cmd.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.BOT_TOKEN);
