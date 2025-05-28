@@ -1,0 +1,24 @@
+{
+  "name": "bot_play_music_from_youtube",
+  "version": "1.0.0",
+  "description": "Bot discord that play music from YouTube",
+  "main": "main.js",
+  "scripts": {
+    "deploy-command": "node deploy-commands.js",
+    "start": "node main.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@discordjs/opus": "^0.10.0",
+    "@discordjs/rest": "^2.5.0",
+    "@discordjs/voice": "^0.18.0",
+    "discord-api-types": "^0.38.8",
+    "discord.js": "^14.19.3",
+    "dotenv": "^16.5.0",
+    "play-dl": "^1.9.7",
+    "ytdl-core": "npm:@distube/ytdl-core@^4.16.10"
+  }
+}
